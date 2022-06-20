@@ -1,0 +1,318 @@
+---
+title: "Retail and Food services Sales Time Series Analysis + Forecasting"
+author: "Arinze Francis"
+date: '2022-06-20'
+output: html_document
+---
+
+```{r,message=FALSE, echo=FALSE }
+rm(list=ls())
+options(scipen=999,digits=4)
+rm
+
+
+
+```
+
+
+# Load R packages
+
+```{r, message=FALSE, echo=FALSE}
+library(readxl)
+library(tidyquant)
+library(tidyverse)
+library(lubridate)
+library(xts)
+library(quantmod)
+library(tseries)
+library(zoo)
+library(ggplot2)
+library(fpp2)
+library(data.table)
+library(forecast)
+
+
+```
+
+
+# Dataset loading
+
+```{r, message=FALSE, echo=FALSE}
+data <- read_xlsx("Retail Food Sales.xlsx", sheet = 2)
+data
+any(is.na(data))
+
+# selecting relevant columns
+data <- data %>% select(Year, Sales)
+data
+
+# Plotting the original dataset
+plot(data$Sales, xlab="year", type ="l", col="palegreen4", main="Retail sales and year")
+
+```
+
+# Converting to time series class and plotting the time series data
+
+```{r}
+data_ts <- ts(data$Sales, start=c(1992,1), frequency = 12)
+data_ts
+class(data_ts)
+
+
+# Plotting time series dataset
+plot(data_ts, xlab="years", ylab="Retail sales", main="Retail and Food service sales vs Years",col="orange",type = "l", lwd=2)
+
+# Observation of the plot:
+# 1. Values of the data are stored in correct order and no missing data.
+# 2. There is an upward trend. On the average, Retail and Food service sales is going up. Sales are increasing in numbers, implying presence of trend component.
+# 3. there was a noticeable fall in retail and food sales in 2008 due to the economic crisis of 2008.
+# 4. After the crisis, the sales returned to its increasing rise.
+# 5. presence of a seasonality
+
+
+```
+
+# to get the seasonality better
+
+```{r}
+
+ggseasonplot(data_ts, year.labels = T, year.labels.left = T) +ylab("degree") +ggtitle("Seasonal Plot Retail and service food sales Data")
+
+# Observation:
+# 1) as the year goes by, sales increases - indicating trend.
+# 2) There was a huge fall in August 2008.
+
+ggseasonplot(data_ts, polar = T) +ylab("degree") +ggtitle("Polar plot: Seasonal Plot Retail and service food sales Data")
+
+
+monthplot(data_ts)
+# Average sales was a little bit higher in the month of October and August. All months showed some irregularities (the bump).
+
+
+```
+
+# Decomposition of plot: Mutiplicative Seasonal correction/adjustment
+
+```{r}
+
+data_decompose <- decompose(data_ts, type = "multiplicative")
+data_decompose
+
+#Observation:
+
+# On the seasonal part: in January for all years, retail sales is 99% of the annual trend (and 1% less) and etc. In August, retail sales is about 1.0013 more.
+
+# On the random part: January, 1993, retail sales was about 1% more than where it should be after accounting for trend and seasonality. March, 1993;retail sales was about 2% left than the trend and seasonality forecast.
+
+
+
+
+plot(data_decompose)
+# the trend is increasing though there is a flattening in 2008.
+# The seasonal part is repeating.
+# On random: My unpredictable error is about 4% (0.96). In the future, i don't know what the number will be, but my best guess is in the middle (1).
+
+
+```
+
+# Splittig data into training and test sets and test the last 2 years
+
+```{r}
+
+data_train <- window(data_ts, start=c(1992,1),end=c(2015,12), freq=12)
+data_train
+
+data_test <- window(data_ts, start=c(2016,1), freq=12)
+data_test
+
+autoplot(data_train, series = "Train") + autolayer(data_test, series = "Test") + ggtitle("Retail sales train and test set") +xlab("year") +ylab("sales")+guides(colour=guide_legend(title = "Forecast"))
+
+```
+
+
+# Data Forcast using Seasonal Naive Method
+
+```{r}
+
+data_naive <- snaive(data_ts, level = c(95), h = 10*12)
+data_naive
+print(summary(data_naive)) 
+# resdiual sd : 17033.3071
+checkresiduals(data_naive)
+
+```
+
+
+
+# Data Forecasting Using ARIMA methods
+
+# To check for stationarity
+
+```{r}
+
+acf(data_ts)
+# it is not stationary (auto correlation because the spikes cross above the blue lines)
+
+
+pacf(data_ts)
+# partial okay as the spikes are not much.
+
+adf.test(data_ts)
+# p-value is higher than 0.05
+
+
+# Converting non-stationary data to stationary data
+
+new_arima <- auto.arima(data_ts, d=1, D=1,stepwise = F, approximation = F, trace = T)
+new_arima
+# The best model has the lowest aic
+
+
+# To check if the new model is stationary
+
+acf(ts(new_arima$residuals))
+# it is okay
+
+pacf(new_arima$residuals)
+# it is also okay
+
+adf.test(new_arima$residuals)
+# the P-value is lower than 0.05
+
+```
+
+
+# Retail sales and services forecasting
+
+```{r}
+
+data_forecast <- forecast(new_arima, level = c(95), h=10*12)
+data_forecast
+
+# Interpretation: Nov, 2017: The point forecast is 488,272. the Lo 95 and high 95 is the confidence level, if it is low, it will be 481,236, if high, it  will be 495,309. It is safe to go with the minimum.
+
+plot(data_forecast, main = "Forecasted Tractor Sales for the next 10 years", col="red")
+#  Interpretation: retail sales will keep growing (a trend) and also captures the seasonality.
+
+```
+
+
+# Validation of the model
+
+```{r}
+
+Box.test(data_forecast$residuals, lag =12, type = "Ljung-Box")
+
+# Interpretation: For the Box-Ljung test, p value is less than 0.5
+
+
+print(summary(data_forecast))
+checkresiduals(data_forecast)
+
+
+
+
+```
+
+
+# Plotting real vs  Fitted Values
+
+```{r}
+
+ts.plot(new_arima$x, new_arima$fitted, col=1:2, gpars = list(xlab = "Years", ylab="Retail and Food services Sales", main= "Real vs Fitted Values"))
+
+```
+
+
+# Recommendation and Conclusion:
+
+Retail and Food services Sales will keep growing upward (a trend) and it also captures the seasonality and ARIMA model fits the best according to our end sample statistics (standard deviation: 3590, aic=5717, MAPE: on the average of 7.7% away from the truth) and I use to form forecast.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
